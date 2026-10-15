@@ -1,0 +1,40 @@
+name: streaming-lakehouse-cdc
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda start
+      - --mode dev-container
+      - --smp 1
+      - --memory 1G
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "19092:19092"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  spark:
+    build: .
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      KAFKA_BOOTSTRAP: redpanda:9092
+      LAKEHOUSE_ROOT: /app/data/lake
+    volumes:
+      - .:/app
+      - ivy-cache:/root/.ivy2   # Delta + Kafka connector jars, downloaded once
+    working_dir: /app
+    command: ["sleep", "infinity"]
+    mem_limit: 3g
+
+volumes:
+  ivy-cache:

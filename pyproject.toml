@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools==75.1.0", "wheel==0.44.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "streaming-lakehouse-cdc"
+version = "0.1.0"
+description = "Kafka -> Spark Structured Streaming -> Delta bronze/silver/gold with idempotent CDC MERGE"
+requires-python = ">=3.10,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "Gopi Dodda" }]
+dependencies = [
+  "pyspark==3.5.3",
+  "delta-spark==3.2.1",
+  "kafka-python==2.0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==8.3.3",
+  "ruff==0.6.9",
+]
+
+[project.scripts]
+lakehouse-run = "lakehouse.run:main"
+lakehouse-compact = "lakehouse.compact:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "scripts"]
+markers = ["integration: needs a running Kafka broker (set KAFKA_BOOTSTRAP)"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
