@@ -1,0 +1,109 @@
+# OPTIONAL. Databricks deployment of the same pipeline using Declarative Automation
+# Bundles (formerly Databricks Asset Bundles). Nothing in the local demo or CI needs it.
+#
+#   cd databricks
+#   databricks bundle validate -t dev
+#   databricks bundle deploy -t dev
+#   databricks bundle run lakehouse_pipeline -t dev
+#
+# Auth comes from the Databricks CLI profile or DATABRICKS_HOST / DATABRICKS_TOKEN
+# (see ../.env.example). No credentials live in this file.
+
+bundle:
+  name: streaming-lakehouse-cdc
+
+variables:
+  lake_root:
+    description: Root path for Delta tables and checkpoints (a UC volume or cloud path)
+    default: /Volumes/brazos_dev/lakehouse/data
+  kafka_bootstrap:
+    description: Kafka bootstrap servers reachable from the workspace
+    default: kafka.example.internal:9092
+  node_type_id:
+    description: Worker node type
+    default: i3.xlarge
+  spark_version:
+    default: 15.4.x-scala2.12
+
+artifacts:
+  lakehouse_wheel:
+    type: whl
+    path: ..
+    build: python -m pip wheel --no-deps -w dist .
+
+resources:
+  jobs:
+    lakehouse_pipeline:
+      name: lakehouse-pipeline-${bundle.target}
+      schedule:
+        quartz_cron_expression: "0 0/15 * * * ?"   # availableNow run every 15 minutes
+        timezone_id: UTC
+        pause_status: PAUSED
+      max_concurrent_runs: 1
+      job_clusters:
+        - &lakehouse_cluster
+          job_cluster_key: lakehouse
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type_id}
+            num_workers: 2
+            spark_conf:
+              spark.sql.shuffle.partitions: "16"
+            spark_env_vars:
+              LAKEHOUSE_ROOT: ${var.lake_root}
+              KAFKA_BOOTSTRAP: ${var.kafka_bootstrap}
+      tasks:
+        - task_key: bronze
+          job_cluster_key: lakehouse
+          python_wheel_task:
+            package_name: streaming_lakehouse_cdc
+            entry_point: lakehouse-run
+            parameters: ["bronze"]
+          libraries:
+            - whl: ../dist/*.whl
+        - task_key: silver
+          depends_on: [{ task_key: bronze }]
+          job_cluster_key: lakehouse
+          python_wheel_task:
+            package_name: streaming_lakehouse_cdc
+            entry_point: lakehouse-run
+            parameters: ["silver"]
+          libraries:
+            - whl: ../dist/*.whl
+        - task_key: gold
+          depends_on: [{ task_key: silver }]
+          job_cluster_key: lakehouse
+          python_wheel_task:
+            package_name: streaming_lakehouse_cdc
+            entry_point: lakehouse-run
+            parameters: ["gold"]
+          libraries:
+            - whl: ../dist/*.whl
+
+    lakehouse_compaction:
+      name: lakehouse-compaction-${bundle.target}
+      schedule:
+        quartz_cron_expression: "0 30 2 * * ?"   # daily 02:30 UTC
+        timezone_id: UTC
+        pause_status: PAUSED
+      job_clusters:
+        - *lakehouse_cluster
+      tasks:
+        - task_key: optimize_vacuum
+          job_cluster_key: lakehouse
+          python_wheel_task:
+            package_name: streaming_lakehouse_cdc
+            entry_point: lakehouse-compact
+            parameters: ["--retention-hours", "168"]
+          libraries:
+            - whl: ../dist/*.whl
+
+targets:
+  dev:
+    mode: development
+    default: true
+  prod:
+    mode: production
+    variables:
+      lake_root: /Volumes/brazos_prod/lakehouse/data
+      kafka_bootstrap: kafka.prod.example.internal:9092
